@@ -6,11 +6,14 @@ import (
 	"sync"
 	"time"
 
+	gxnet "github.com/dubbogo/gost/net"
 	perrors "github.com/pkg/errors"
 	uatomic "go.uber.org/atomic"
 )
 
 var (
+	errSelfConnect = perrors.New("connect self!")
+
 	serverID uatomic.Int32
 )
 
@@ -137,9 +140,9 @@ func (s *server) runTCPEventLoop() {
 		defer s.wg.Done()
 
 		var (
-			err error
-			// isession
-			delay time.Duration
+			err    error
+			client ISession
+			delay  time.Duration
 		)
 		for {
 			if s.IsClosed() {
@@ -149,8 +152,7 @@ func (s *server) runTCPEventLoop() {
 			if delay != 0 {
 				<-time.After(delay)
 			}
-			// TODO accept return isession and error
-			err = s.accept()
+			client, err = s.accept()
 			if err != nil {
 				if delay == 0 {
 					delay = 5 * time.Millisecond
@@ -163,13 +165,22 @@ func (s *server) runTCPEventLoop() {
 				continue
 			}
 			delay = 0
-			// TODO
-			// session.run()
+			// TODO session.run()
 		}
 	}()
 }
 
-// TODO return isession and error
-func (s *server) accept() error {
-	return nil
+func (s *server) accept() (ISession, error) {
+	conn, err := s.streamListener.Accept()
+	if err != nil {
+		return nil, perrors.WithStack(err)
+	}
+	if gxnet.IsSameAddr(conn.RemoteAddr(), conn.LocalAddr()) {
+		fmt.Printf("conn.localAddr{%s} == conn.RemoteAddr{%s}\n", conn.LocalAddr().String(), conn.RemoteAddr().String())
+		return nil, errSelfConnect
+	}
+
+	ss := newTCPSession(conn, s)
+
+	return ss, nil
 }
