@@ -123,18 +123,18 @@ func (s *server) listenTCP() error {
 	return nil
 }
 
-func (s *server) RunEventLoop() {
+func (s *server) RunEventLoop(newSession NewSessionCallback) {
 	if err := s.listen(); err != nil {
 		panic(fmt.Errorf("server.listen() = error:%+v", perrors.WithStack(err)))
 	}
 
 	switch s.endPointType {
 	case TCP_SERVER:
-		s.runTCPEventLoop()
+		s.runTCPEventLoop(newSession)
 	}
 }
 
-func (s *server) runTCPEventLoop() {
+func (s *server) runTCPEventLoop(newSession NewSessionCallback) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -152,7 +152,7 @@ func (s *server) runTCPEventLoop() {
 			if delay != 0 {
 				<-time.After(delay)
 			}
-			client, err = s.accept()
+			client, err = s.accept(newSession)
 			if err != nil {
 				if delay == 0 {
 					delay = 5 * time.Millisecond
@@ -170,7 +170,7 @@ func (s *server) runTCPEventLoop() {
 	}()
 }
 
-func (s *server) accept() (ISession, error) {
+func (s *server) accept(newSession NewSessionCallback) (ISession, error) {
 	conn, err := s.streamListener.Accept()
 	if err != nil {
 		return nil, perrors.WithStack(err)
@@ -181,6 +181,11 @@ func (s *server) accept() (ISession, error) {
 	}
 
 	ss := newTCPSession(conn, s)
+	err = newSession(ss)
+	if err != nil {
+		conn.Close()
+		return nil, perrors.WithStack(err)
+	}
 
 	return ss, nil
 }

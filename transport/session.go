@@ -24,7 +24,10 @@ type ISession interface {
 	IsClosed() bool
 	EndPoint() IEndPoint
 
+	SetMaxMsgLen(int)
+
 	// codec
+	SetPkgHandler(IReadWriter)
 	SetReader(IReader)
 	SetWriter(IWriter)
 
@@ -36,8 +39,9 @@ type session struct {
 	name       string
 	endPoint   IEndPoint
 
-	reader IReader
-	writer IWriter
+	reader    IReader
+	writer    IWriter
+	maxMsgLen int32
 
 	exitChan chan struct{}
 
@@ -54,6 +58,8 @@ func newSession(endPoint IEndPoint, conn IConnection) *session {
 		name:       defaultSessionName,
 		endPoint:   endPoint,
 		connection: conn,
+
+		maxMsgLen: maxReadBufLen,
 
 		exitChan: make(chan struct{}),
 	}
@@ -95,6 +101,13 @@ func (s *session) Close() {
 	// TODO
 }
 
+func (s *session) SetMaxMsgLen(length int) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.maxMsgLen = int32(length)
+}
+
 func (s *session) SetReader(reader IReader) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -107,6 +120,14 @@ func (s *session) SetWriter(writer IWriter) {
 	defer s.lock.Unlock()
 
 	s.writer = writer
+}
+
+func (s *session) SetPkgHandler(handler IReadWriter) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.reader = handler
+	s.writer = handler
 }
 
 func (s *session) sessionToken() string {
@@ -127,6 +148,14 @@ func (s *session) run() {
 
 	s.grNum.Add(1)
 	go s.handlePackage()
+}
+
+func (s *session) addTask(pkg interface{}) {
+	f := func() {
+		fmt.Println("handle pkg:", pkg)
+	}
+	// TODO handle pkg with task pool
+	f()
 }
 
 func (s *session) handlePackage() {
@@ -210,15 +239,19 @@ func (s *session) handleTCPPackage() error {
 					break
 				}
 				pkg, pkgLen, err = s.reader.Read(s, pktBuf.Bytes())
-				// TODO
+				if err == nil && s.maxMsgLen > 0 && pkgLen > int(s.maxMsgLen) {
+					err = perrors.Errorf("pkgLen %d > session max message len %d", pkgLen, s.maxMsgLen)
+				}
 				if err != nil {
+					fmt.Printf("%s, [session.handleTCPPackage] = len{%d}, error:%+v", s.sessionToken(), pkgLen, perrors.WithStack(err))
+					exit = true
 					break
 				}
 				if pkg == nil {
 					break
 				}
 
-				// TODO handle pkg with taskPool
+				s.addTask(pkg)
 				pktBuf.Next(pkgLen)
 			}
 		}

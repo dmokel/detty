@@ -1,5 +1,8 @@
 package detty
 
+// NewSessionCallback will be invoked when server accepts a new client connection
+type NewSessionCallback func(ISession) error
+
 // IReader ...
 type IReader interface {
 	// Read Parse tcp/udp/websocket pkg from buffer and if possible return a complete pkg.
@@ -23,6 +26,12 @@ type IWriter interface {
 	Write(ISession, interface{}) ([]byte, error)
 }
 
+// IReadWriter interface use for handle application packages
+type IReadWriter interface {
+	IReader
+	IWriter
+}
+
 // IEndPoint is a general identity of the server and client
 type IEndPoint interface {
 	ID() EndPointID
@@ -30,5 +39,5 @@ type IEndPoint interface {
 	IsClosed() bool
 	Close()
 
-	RunEventLoop()
+	RunEventLoop(newSession NewSessionCallback)
 }
