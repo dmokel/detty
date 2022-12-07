@@ -165,7 +165,7 @@ func (s *server) runTCPEventLoop() {
 				continue
 			}
 			delay = 0
-			// TODO session.run()
+			client.(*session).run()
 		}
 	}()
 }

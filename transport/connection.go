@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 
+	perrors "github.com/pkg/errors"
 	uatomic "go.uber.org/atomic"
 )
 
@@ -78,4 +79,14 @@ func newDettyTCPConn(conn net.Conn) *dettyTCPConn {
 			remoteAddr: remoteAddr,
 		},
 	}
+}
+
+func (d *dettyTCPConn) recv(p []byte) (int, error) {
+	var (
+		err    error
+		length int
+	)
+
+	length, err = d.reader.Read(p)
+	return length, perrors.WithStack(err)
 }
