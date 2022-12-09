@@ -21,11 +21,13 @@ const (
 // ISession ...
 type ISession interface {
 	Conn() net.Conn
+	Stat() string
 	IsClosed() bool
 	EndPoint() IEndPoint
 
 	SetMaxMsgLen(int)
 
+	SetEventListener(IEventListener)
 	// codec
 	SetPkgHandler(IReadWriter)
 	SetReader(IReader)
@@ -38,6 +40,8 @@ type session struct {
 	connection IConnection
 	name       string
 	endPoint   IEndPoint
+
+	listener IEventListener
 
 	reader    IReader
 	writer    IWriter
@@ -84,6 +88,11 @@ func (s *session) Conn() net.Conn {
 	return nil
 }
 
+func (s *session) Stat() string {
+	// TODO
+	return ""
+}
+
 func (s *session) IsClosed() bool {
 	select {
 	case <-s.exitChan:
@@ -106,6 +115,13 @@ func (s *session) SetMaxMsgLen(length int) {
 	defer s.lock.Unlock()
 
 	s.maxMsgLen = int32(length)
+}
+
+func (s *session) SetEventListener(listener IEventListener) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.listener = listener
 }
 
 func (s *session) SetReader(reader IReader) {
@@ -140,10 +156,16 @@ func (s *session) sessionToken() string {
 }
 
 func (s *session) run() {
-	if s.connection == nil || s.writer == nil {
-		errStr := fmt.Sprintf("session{name:%s, conn:%#v, writer:%#v}", s.name, s.connection, s.writer)
+	if s.connection == nil || s.writer == nil || s.listener == nil {
+		errStr := fmt.Sprintf("session{name:%s, conn:%#v, writer:%#v, listener:%#v}", s.name, s.connection, s.writer, s.listener)
 		fmt.Println(errStr)
 		panic(errStr)
+	}
+
+	if err := s.listener.OnOpen(s); err != nil {
+		fmt.Printf("[OnOpen] session %s, error: %#v\n", s.Stat(), err)
+		s.Close() // just Close
+		return
 	}
 
 	s.grNum.Add(1)
@@ -152,9 +174,11 @@ func (s *session) run() {
 
 func (s *session) addTask(pkg interface{}) {
 	f := func() {
-		fmt.Println("handle pkg:", pkg)
+		s.listener.OnMessage(s, pkg)
 	}
+
 	// TODO handle pkg with task pool
+
 	f()
 }
 
@@ -165,10 +189,17 @@ func (s *session) handlePackage() {
 		// TODO recover
 		grNum := s.grNum.Add(-1)
 		fmt.Printf("%s, [session.handlePackage] gr will exit now, left gr num %d\n", s.sessionToken(), grNum)
+		// session stop
 
 		if err != nil {
 			fmt.Printf("%s, [session.handlePackage] error:%+v\n", s.sessionToken(), perrors.WithStack(err))
+			if s != nil && s.listener != nil {
+				s.listener.OnError(s, err)
+			}
 		}
+
+		s.listener.OnClose(s)
+		// session gc
 	}()
 
 	if _, ok := s.connection.(*dettyTCPConn); ok {
@@ -191,6 +222,7 @@ func (s *session) handleTCPPackage() error {
 		conn   *dettyTCPConn
 		buf    []byte
 		bufLen int
+
 		pktBuf *gxbytes.Buffer
 
 		pkg    interface{}

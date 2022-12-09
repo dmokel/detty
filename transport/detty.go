@@ -32,6 +32,30 @@ type IReadWriter interface {
 	IWriter
 }
 
+// IEventListener is used to process pkg that received from remote session
+type IEventListener interface {
+	// OnOpen invoked when session opened
+	// If the return error is not nil, @session will be closed.
+	OnOpen(ISession) error
+
+	// OnClose invoked when session closed.
+	OnClose(ISession)
+
+	// OnError invoked when got error
+	OnError(ISession, error)
+
+	// OnMessage invoked when detty received a message, pls attention that do not handle long time
+	// logic processing in this function. You'd better set package's maximum length.
+	// If the message's length is greater than it, you should return err in
+	// IReader{Reade} and detty will close the connection soon.
+	//
+	// If your logic processing in this function will take a long time, you should start goroutine
+	// pool to handle the processing asynchronously. Or you can do the logic processing in other
+	// asynchronous way.
+	// !!!In short, your OnMessage callback function should return asap.
+	OnMessage(ISession, interface{})
+}
+
 // IEndPoint is a general identity of the server and client
 type IEndPoint interface {
 	ID() EndPointID
