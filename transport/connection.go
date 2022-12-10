@@ -18,6 +18,9 @@ type IConnection interface {
 	LocalAddr() string
 	RemoteAddr() string
 
+	incReadPkgNum()
+	incWritePkgNum()
+
 	send(interface{}) (int, error)
 
 	close(int)
@@ -26,6 +29,11 @@ type IConnection interface {
 
 type dettyConn struct {
 	id uint32
+
+	readBytes   uatomic.Uint32 // read bytes
+	writeBytes  uatomic.Uint32 // write bytes
+	readPkgNum  uatomic.Uint32 // send pkg number
+	writePkgNum uatomic.Uint32 // recv pkg number
 
 	localAddr  string // local address
 	remoteAddr string // remote address
@@ -44,10 +52,20 @@ func (c *dettyConn) RemoteAddr() string {
 	return c.remoteAddr
 }
 
-func (c *dettyConn) close(int) {}
+func (c *dettyConn) close(int) {
+	// TODO
+}
 
 func (c *dettyConn) setSession(ss ISession) {
 	c.ss = ss
+}
+
+func (c *dettyConn) incReadPkgNum() {
+	c.readPkgNum.Add(1)
+}
+
+func (c *dettyConn) incWritePkgNum() {
+	c.writePkgNum.Add(1)
 }
 
 type dettyTCPConn struct {
@@ -90,6 +108,7 @@ func (d *dettyTCPConn) recv(p []byte) (int, error) {
 	)
 
 	length, err = d.reader.Read(p)
+	d.readBytes.Add(uint32(length))
 	return length, perrors.WithStack(err)
 }
 
@@ -97,7 +116,7 @@ func (d *dettyTCPConn) send(pkg interface{}) (int, error) {
 	if p, ok := pkg.([]byte); ok {
 		lenght, err := d.writer.Write(p)
 		if err == nil {
-			// TODO record some connection status
+			d.writeBytes.Add(uint32(len(p)))
 		}
 		return lenght, perrors.WithStack(err)
 	}

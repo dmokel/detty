@@ -16,6 +16,8 @@ const (
 
 	defaultSessionName    = "session"
 	defaultTCPSessionName = "tcp-session"
+
+	outputFormat = "session %s, Read Bytes: %d, Write Bytes: %d, Read Pkgs: %d, Write Pkgs: %d\n"
 )
 
 // ISession ...
@@ -26,6 +28,7 @@ type ISession interface {
 	EndPoint() IEndPoint
 
 	SetMaxMsgLen(int)
+	SetName(string)
 
 	SetEventListener(IEventListener)
 	// codec
@@ -53,6 +56,7 @@ type session struct {
 	writer    IWriter
 	maxMsgLen int32
 
+	once     *sync.Once
 	exitChan chan struct{}
 
 	// goroutines sync
@@ -72,6 +76,7 @@ func newSession(endPoint IEndPoint, conn IConnection) *session {
 
 		maxMsgLen: maxReadBufLen,
 
+		once:     &sync.Once{},
 		exitChan: make(chan struct{}),
 	}
 
@@ -95,9 +100,48 @@ func (s *session) Conn() net.Conn {
 	return nil
 }
 
+func (s *session) incReadPkgNum() {
+	if s == nil {
+		return
+	}
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	if s.connection != nil {
+		s.connection.incReadPkgNum()
+	}
+}
+
+func (s *session) incWritePkgNum() {
+	if s == nil {
+		return
+	}
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	if s.connection != nil {
+		s.connection.incWritePkgNum()
+	}
+}
+
+func (s *session) dettyConn() *dettyConn {
+	if dc, ok := s.connection.(*dettyTCPConn); ok {
+		return &dc.dettyConn
+	}
+	return nil
+}
+
 func (s *session) Stat() string {
-	// TODO
-	return ""
+	conn := s.dettyConn()
+	if conn == nil {
+		return ""
+	}
+	return fmt.Sprintf(
+		outputFormat,
+		s.sessionToken(),
+		conn.readBytes.Load(),
+		conn.writeBytes.Load(),
+		conn.readPkgNum.Load(),
+		conn.writePkgNum.Load(),
+	)
 }
 
 func (s *session) IsClosed() bool {
@@ -114,7 +158,14 @@ func (s *session) EndPoint() IEndPoint {
 }
 
 func (s *session) stop() {
-	// TODO
+	select {
+	case <-s.exitChan:
+		return
+	default:
+		s.once.Do(func() {
+			close(s.exitChan)
+		})
+	}
 }
 
 func (s *session) gc() {
@@ -122,7 +173,8 @@ func (s *session) gc() {
 }
 
 func (s *session) Close() {
-	// TODO
+	s.stop()
+	fmt.Printf("%s closed now. its current gr num is %d\n", s.sessionToken(), s.grNum.Load())
 }
 
 func (s *session) SetMaxMsgLen(length int) {
@@ -130,6 +182,13 @@ func (s *session) SetMaxMsgLen(length int) {
 	defer s.lock.Unlock()
 
 	s.maxMsgLen = int32(length)
+}
+
+func (s *session) SetName(name string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.name = name
 }
 
 func (s *session) SetEventListener(listener IEventListener) {
@@ -179,7 +238,7 @@ func (s *session) run() {
 
 	if err := s.listener.OnOpen(s); err != nil {
 		fmt.Printf("[OnOpen] session %s, error: %#v\n", s.Stat(), err)
-		s.Close() // just Close
+		s.Close()
 		return
 	}
 
@@ -190,6 +249,7 @@ func (s *session) run() {
 func (s *session) addTask(pkg interface{}) {
 	f := func() {
 		s.listener.OnMessage(s, pkg)
+		s.incReadPkgNum()
 	}
 
 	// TODO handle pkg with task pool
@@ -201,10 +261,12 @@ func (s *session) handlePackage() {
 	var err error
 
 	defer func() {
-		// TODO recover
+		if r := recover(); r != nil {
+			// TODO
+		}
 		grNum := s.grNum.Add(-1)
 		fmt.Printf("%s, [session.handlePackage] gr will exit now, left gr num %d\n", s.sessionToken(), grNum)
-		// session stop
+		s.stop()
 
 		if err != nil {
 			fmt.Printf("%s, [session.handlePackage] error:%+v\n", s.sessionToken(), perrors.WithStack(err))
@@ -214,7 +276,7 @@ func (s *session) handlePackage() {
 		}
 
 		s.listener.OnClose(s)
-		// session gc
+		s.gc()
 	}()
 
 	if _, ok := s.connection.(*dettyTCPConn); ok {
@@ -333,5 +395,6 @@ func (s *session) WritePkg(pkg interface{}) (totalBytesLength int, sendBytesLeng
 		fmt.Printf("%s, [session.WritePkg] @s.Connection.Write(pkg:%#v) = err:%+v\n", s.Stat(), pkg, err)
 		return len(pkgBytes), succCount, perrors.WithStack(err)
 	}
+	s.incWritePkgNum()
 	return len(pkgBytes), succCount, nil
 }
