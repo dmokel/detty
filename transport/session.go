@@ -33,6 +33,12 @@ type ISession interface {
 	SetReader(IReader)
 	SetWriter(IWriter)
 
+	// WritePkg: the IWriter will invoke this function.
+	// totalBytesLength: @pkg stream bytes length after encoding @pkg.
+	// sendBytesLength: stream bytes length sent out successfully.
+	// err: maybe it has illegal data, encoding error, or write out system error.
+	WritePkg(pkg interface{}) (totalBytesLength int, sendBytesLength int, err error)
+
 	Close()
 }
 
@@ -52,7 +58,8 @@ type session struct {
 	// goroutines sync
 	grNum uatomic.Int32
 
-	lock sync.RWMutex
+	lock       sync.RWMutex
+	packetLock sync.RWMutex
 }
 
 var _ ISession = &session{}
@@ -104,6 +111,14 @@ func (s *session) IsClosed() bool {
 
 func (s *session) EndPoint() IEndPoint {
 	return s.endPoint
+}
+
+func (s *session) stop() {
+	// TODO
+}
+
+func (s *session) gc() {
+	// TODO
 }
 
 func (s *session) Close() {
@@ -293,4 +308,30 @@ func (s *session) handleTCPPackage() error {
 	}
 
 	return perrors.WithStack(err)
+}
+
+func (s *session) WritePkg(pkg interface{}) (totalBytesLength int, sendBytesLength int, err error) {
+	if pkg == nil {
+		return 0, 0, fmt.Errorf("pkg is nil")
+	}
+	if s.IsClosed() {
+		return 0, 0, ErrSessionClosed
+	}
+
+	pkgBytes, err := s.writer.Write(s, pkg)
+	if err != nil {
+		fmt.Printf("%s, [session.WritePkg] session.writer.Write(@pkg:%#v) = error:%+v\n", s.Stat(), pkg, err)
+		return len(pkgBytes), 0, perrors.WithStack(err)
+	}
+	pkg = pkgBytes
+
+	s.packetLock.RLock()
+	defer s.packetLock.RUnlock()
+
+	succCount, err := s.connection.send(pkg)
+	if err != nil {
+		fmt.Printf("%s, [session.WritePkg] @s.Connection.Write(pkg:%#v) = err:%+v\n", s.Stat(), pkg, err)
+		return len(pkgBytes), succCount, perrors.WithStack(err)
+	}
+	return len(pkgBytes), succCount, nil
 }

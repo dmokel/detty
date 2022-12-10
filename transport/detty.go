@@ -1,5 +1,11 @@
 package detty
 
+import perrors "github.com/pkg/errors"
+
+var (
+	ErrSessionClosed = perrors.New("session Already Closed")
+)
+
 // NewSessionCallback will be invoked when server accepts a new client connection
 type NewSessionCallback func(ISession) error
 

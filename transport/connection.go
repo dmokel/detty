@@ -18,6 +18,8 @@ type IConnection interface {
 	LocalAddr() string
 	RemoteAddr() string
 
+	send(interface{}) (int, error)
+
 	close(int)
 	setSession(ISession)
 }
@@ -89,4 +91,16 @@ func (d *dettyTCPConn) recv(p []byte) (int, error) {
 
 	length, err = d.reader.Read(p)
 	return length, perrors.WithStack(err)
+}
+
+func (d *dettyTCPConn) send(pkg interface{}) (int, error) {
+	if p, ok := pkg.([]byte); ok {
+		lenght, err := d.writer.Write(p)
+		if err == nil {
+			// TODO record some connection status
+		}
+		return lenght, perrors.WithStack(err)
+	}
+
+	return 0, perrors.Errorf("illegal @pkg{%#v} type", pkg)
 }
